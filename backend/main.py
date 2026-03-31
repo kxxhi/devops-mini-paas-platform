@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 import os
 import subprocess
 import shutil
@@ -7,7 +8,15 @@ import stat
 
 app = FastAPI()
 
-# Request model
+# 🔥 Enable CORS (VERY IMPORTANT)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class Repo(BaseModel):
     repo_url: str
 
@@ -17,7 +26,7 @@ def home():
     return {"message": "Mini PaaS Backend Running 🚀"}
 
 
-# 🔹 Windows-safe delete function
+# Windows-safe delete
 def remove_readonly(func, path, exc_info):
     os.chmod(path, stat.S_IWRITE)
     func(path)
@@ -27,18 +36,16 @@ def remove_readonly(func, path, exc_info):
 def deploy(data: Repo):
     repo_url = data.repo_url
 
-    # Create deployments folder
     os.makedirs("deployments", exist_ok=True)
 
-    # Extract repo name
     repo_name = repo_url.split("/")[-1].replace(".git", "")
     repo_path = os.path.join("deployments", repo_name)
 
-    # 🔥 Remove old repo (safe delete)
+    # Delete old repo
     if os.path.exists(repo_path):
         shutil.rmtree(repo_path, onerror=remove_readonly)
 
-    # 🔹 STEP 1: Clone repo
+    # Clone repo
     clone = subprocess.run(
         ["git", "clone", repo_url, repo_path],
         capture_output=True,
@@ -46,15 +53,11 @@ def deploy(data: Repo):
     )
 
     if clone.returncode != 0:
-        return {
-            "error": "Git clone failed",
-            "details": clone.stderr
-        }
+        return {"error": clone.stderr}
 
-    # 🔹 STEP 2: Ensure Dockerfile exists
+    # Create Dockerfile if missing
     dockerfile_path = os.path.join(repo_path, "Dockerfile")
 
-    # 🔥 Auto-create Dockerfile if missing
     if not os.path.exists(dockerfile_path):
         with open(dockerfile_path, "w") as f:
             f.write("""FROM python:3.10
@@ -64,7 +67,7 @@ RUN pip install -r requirements.txt || true
 CMD ["python", "app.py"]
 """)
 
-    # 🔹 STEP 3: Build Docker image
+    # Build image
     image_name = repo_name.lower()
 
     build = subprocess.run(
@@ -76,11 +79,23 @@ CMD ["python", "app.py"]
     if build.returncode != 0:
         return {
             "error": "Docker build failed",
-            "stdout": build.stdout,
             "stderr": build.stderr
         }
 
+    # Run container
+    run = subprocess.run(
+        ["docker", "run", "-d", "-p", "8001:80", image_name],
+        capture_output=True,
+        text=True
+    )
+
+    if run.returncode != 0:
+        return {
+            "error": "Container run failed",
+            "stderr": run.stderr
+        }
+
     return {
-        "status": "Docker image built successfully 🚀",
-        "image": image_name
+        "status": "App deployed successfully 🚀",
+        "url": "http://localhost:8001"
     }
