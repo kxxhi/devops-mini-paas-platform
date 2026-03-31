@@ -124,8 +124,7 @@ def deploy(data: Repo):
         }
 
     return {
-        "status": "App deployed successfully 🚀",
-        "url": "http://localhost:8001"
-        "status": "Deployment started 🚀",
-        "message": "App will be live in ~1 minute at http://localhost:8001"
-    }
+    "status": "App deployed successfully 🚀",
+    "url": "http://localhost:8001",
+    "message": "App will be live in ~1 minute"
+}
