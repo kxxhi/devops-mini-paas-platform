@@ -4,8 +4,10 @@ import os
 import subprocess
 import shutil
 import stat
+import threading
 
 app = FastAPI()
+
 
 # Request model
 class Repo(BaseModel):
@@ -17,70 +19,66 @@ def home():
     return {"message": "Mini PaaS Backend Running 🚀"}
 
 
-# 🔹 Windows-safe delete function
+# Windows-safe delete
 def remove_readonly(func, path, exc_info):
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
 
-@app.post("/deploy")
-def deploy(data: Repo):
-    repo_url = data.repo_url
-
-    # Create deployments folder
+# 🔥 BACKGROUND DEPLOY FUNCTION
+def deploy_repo(repo_url):
     os.makedirs("deployments", exist_ok=True)
 
-    # Extract repo name
     repo_name = repo_url.split("/")[-1].replace(".git", "")
     repo_path = os.path.join("deployments", repo_name)
 
-    # 🔥 Remove old repo (safe delete)
+    # Remove old repo
     if os.path.exists(repo_path):
         shutil.rmtree(repo_path, onerror=remove_readonly)
 
-    # 🔹 STEP 1: Clone repo
-    clone = subprocess.run(
-        ["git", "clone", repo_url, repo_path],
-        capture_output=True,
-        text=True
-    )
+    # Clone repo
+    subprocess.run(["git", "clone", repo_url, repo_path])
 
-    if clone.returncode != 0:
-        return {
-            "error": "Git clone failed",
-            "details": clone.stderr
-        }
-
-    # 🔹 STEP 2: Ensure Dockerfile exists
+    # Ensure Dockerfile exists
     dockerfile_path = os.path.join(repo_path, "Dockerfile")
-
-    # 🔥 Auto-create Dockerfile if missing
     if not os.path.exists(dockerfile_path):
         with open(dockerfile_path, "w") as f:
             f.write("""FROM python:3.10
 WORKDIR /app
 COPY . .
 RUN pip install -r requirements.txt || true
-CMD ["python", "app.py"]
+CMD ["python", "-m", "http.server", "8000"]
 """)
 
-    # 🔹 STEP 3: Build Docker image
     image_name = repo_name.lower()
 
-    build = subprocess.run(
-        ["docker", "build", "-t", image_name, repo_path],
+    # Build Docker image
+    subprocess.run(["docker", "build", "-t", image_name, repo_path])
+
+    container_name = image_name + "-container"
+
+    # 🔥 FIX: Remove old container automatically
+    subprocess.run(
+        ["docker", "rm", "-f", container_name],
         capture_output=True,
         text=True
     )
 
-    if build.returncode != 0:
-        return {
-            "error": "Docker build failed",
-            "stdout": build.stdout,
-            "stderr": build.stderr
-        }
+    # Run container
+    subprocess.run([
+        "docker", "run", "-d",
+        "-p", "8001:8000",
+        "--name", container_name,
+        image_name
+    ])
+
+
+# 🔥 FAST NON-BLOCKING ENDPOINT
+@app.post("/deploy")
+def deploy(data: Repo):
+    threading.Thread(target=deploy_repo, args=(data.repo_url,)).start()
 
     return {
-        "status": "Docker image built successfully 🚀",
-        "image": image_name
+        "status": "Deployment started 🚀",
+        "message": "App will be live in ~1 minute at http://localhost:8001"
     }
