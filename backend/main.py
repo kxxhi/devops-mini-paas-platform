@@ -6,11 +6,15 @@ import subprocess
 import shutil
 import stat
 import threading
+import time
+import uuid
 
 app = FastAPI()
 
+# 🔥 GLOBAL LOG STORAGE
+logs = []
 
-# 🔥 Enable CORS (VERY IMPORTANT)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,103 +32,117 @@ def home():
     return {"message": "Mini PaaS Backend Running 🚀"}
 
 
-# Windows-safe delete
+# 🔥 LOG ENDPOINT
+@app.get("/logs")
+def get_logs():
+    return {"logs": logs}
+
+
 # Windows-safe delete
 def remove_readonly(func, path, exc_info):
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
 
-@app.post("/deploy")
-def deploy(data: Repo):
-    repo_url = data.repo_url
-
-# 🔥 BACKGROUND DEPLOY FUNCTION
+# 🔥 DEPLOY FUNCTION (FULL FIXED VERSION)
 def deploy_repo(repo_url):
-    os.makedirs("deployments", exist_ok=True)
+    logs.clear()
 
-    repo_name = repo_url.split("/")[-1].replace(".git", "")
-    repo_path = os.path.join("deployments", repo_name)
+    def log(msg):
+        print(msg)
+        logs.append(msg)
 
-    # Delete old repo
-    # Remove old repo
-    if os.path.exists(repo_path):
-        shutil.rmtree(repo_path, onerror=remove_readonly)
+    try:
+        log("🚀 Starting deployment...")
 
-    # Clone repo
-    clone = subprocess.run(
-        ["git", "clone", repo_url, repo_path],
-        capture_output=True,
-        text=True
-    )
+        os.makedirs("deployments", exist_ok=True)
 
-    if clone.returncode != 0:
-        return {"error": clone.stderr}
-    # Clone repo
-    subprocess.run(["git", "clone", repo_url, repo_path])
+        # 🔥 UNIQUE FOLDER (avoids Windows lock issues)
+        repo_name = repo_url.split("/")[-1].replace(".git", "")
+        unique_id = uuid.uuid4().hex[:6]
+        repo_path = os.path.join("deployments", f"{repo_name}_{unique_id}")
 
-    # Create Dockerfile if missing
-    # Ensure Dockerfile exists
-    dockerfile_path = os.path.join(repo_path, "Dockerfile")
+        # 🔥 CLONE
+        log(f"📦 Cloning repo: {repo_url}")
 
-    if not os.path.exists(dockerfile_path):
-        with open(dockerfile_path, "w") as f:
-            f.write("""FROM python:3.10
+        clone = subprocess.run(
+            ["git", "clone", repo_url, repo_path],
+            text=True
+        )
+
+        if clone.returncode != 0:
+            log("❌ Clone failed")
+            return
+
+        log("✅ Repo cloned successfully")
+
+        # Ensure Dockerfile exists
+        dockerfile_path = os.path.join(repo_path, "Dockerfile")
+
+        if not os.path.exists(dockerfile_path):
+            log("🛠 Creating Dockerfile...")
+            with open(dockerfile_path, "w") as f:
+                f.write("""FROM python:3.10
 WORKDIR /app
 COPY . .
 RUN pip install -r requirements.txt || true
 CMD ["python", "-m", "http.server", "8000"]
 """)
 
-    # Build image
-    image_name = repo_name.lower()
+        image_name = repo_name.lower()
+        container_name = image_name + "-" + unique_id
 
-    # Build Docker image
-    subprocess.run(["docker", "build", "-t", image_name, repo_path])
+        # 🔥 BUILD DOCKER
+        log("🐳 Building Docker image...")
 
-    container_name = image_name + "-container"
+        build = subprocess.run(
+            ["docker", "build", "-t", image_name, repo_path],
+            text=True
+        )
 
-    # 🔥 FIX: Remove old container automatically
-    subprocess.run(
-        ["docker", "rm", "-f", container_name],
-        capture_output=True,
-        text=True
-    )
+        if build.returncode != 0:
+            log("❌ Docker build failed")
+            return
 
-    if build.returncode != 0:
-        return {
-            "error": "Docker build failed",
-            "stderr": build.stderr
-        }
-    # Run container
-    subprocess.run([
-        "docker", "run", "-d",
-        "-p", "8001:8000",
-        "--name", container_name,
-        image_name
-    ])
+        log("✅ Docker image built")
+
+        # Remove old container (ignore errors)
+        subprocess.run(
+            ["docker", "rm", "-f", container_name],
+            text=True
+        )
+
+        # 🔥 RUN CONTAINER
+        log("🚀 Running container...")
+
+        run = subprocess.run(
+            [
+                "docker", "run", "-d",
+                "-p", "8001:8000",
+                "--name", container_name,
+                image_name
+            ],
+            text=True
+        )
+
+        if run.returncode != 0:
+            log("❌ Container run failed")
+            return
+
+        log("🎉 Deployment successful!")
+        log("🌐 App running at: http://localhost:8001")
+
+    except Exception as e:
+        log(f"💥 ERROR: {str(e)}")
 
 
-# 🔥 FAST NON-BLOCKING ENDPOINT
+# 🔥 API ENDPOINT
 @app.post("/deploy")
 def deploy(data: Repo):
     threading.Thread(target=deploy_repo, args=(data.repo_url,)).start()
 
-    # Run container
-    run = subprocess.run(
-        ["docker", "run", "-d", "-p", "8001:80", image_name],
-        capture_output=True,
-        text=True
-    )
-
-    if run.returncode != 0:
-        return {
-            "error": "Container run failed",
-            "stderr": run.stderr
-        }
-
     return {
-    "status": "App deployed successfully 🚀",
-    "url": "http://localhost:8001",
-    "message": "App will be live in ~1 minute"
-}
+        "status": "Deployment started 🚀",
+        "message": "Check logs below",
+        "url": "http://localhost:8001"
+    }

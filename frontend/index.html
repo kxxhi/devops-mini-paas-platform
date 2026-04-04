@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Mini Deployment Platform </title>
+    <title>Mini Deployment Platform</title>
 
     <style>
         body {
@@ -50,20 +50,7 @@
         }
 
         .status {
-            margin-top: 20px;
-            font-size: 16px;
-        }
-
-        .loading {
-            color: orange;
-        }
-
-        .success {
-            color: green;
-        }
-
-        .error {
-            color: red;
+            margin-top: 15px;
         }
 
         .spinner {
@@ -93,10 +80,6 @@
             font-family: monospace;
             font-size: 13px;
         }
-
-        a {
-            color: blue;
-        }
     </style>
 </head>
 
@@ -114,7 +97,8 @@
             placeholder="Enter GitHub Repo URL"
         />
 
-        <button onclick="deploy()">Deploy</button>
+        <!-- ✅ FIXED BUTTON -->
+        <button onclick="deployRepo()">Deploy</button>
 
         <div id="spinner" style="display:none;" class="spinner"></div>
 
@@ -125,36 +109,62 @@
 </div>
 
 <script>
-async function deploy() {
-    const repo = document.getElementById("repoInput").value;
-    const logsDiv = document.getElementById("logs");
+async function deployRepo() {
+    const repoUrl = document.getElementById("repoInput").value;
+
+    if (!repoUrl) {
+        alert("Enter a repo URL");
+        return;
+    }
+
+    const status = document.getElementById("status");
     const spinner = document.getElementById("spinner");
+    const logs = document.getElementById("logs");
 
-    logsDiv.innerHTML = "";
+    // reset UI
+    status.innerText = "Starting deployment...";
     spinner.style.display = "block";
+    logs.innerText = "";
 
-    const response = await fetch("http://127.0.0.1:8000/deploy", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ repo_url: repo })
-    });
+    try {
+        const res = await fetch("http://127.0.0.1:8000/deploy", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ repo_url: repoUrl })
+        });
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+        const data = await res.json();
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        status.innerHTML = `
+            ${data.status}<br>
+            <a href="${data.url}" target="_blank">${data.url}</a>
+        `;
 
-        const chunk = decoder.decode(value);
-        logsDiv.innerHTML += chunk.replace(/\n/g, "<br>");
-        logsDiv.scrollTop = logsDiv.scrollHeight;
+    } catch (err) {
+        status.innerText = "❌ Deployment failed!";
     }
 
     spinner.style.display = "none";
 }
+
+// 🔥 LIVE LOG FETCHER
+async function fetchLogs() {
+    try {
+        const res = await fetch("http://127.0.0.1:8000/logs");
+        const data = await res.json();
+
+        document.getElementById("logs").innerText =
+            (data.logs || []).join("\n");
+
+    } catch (e) {
+        // ignore errors
+    }
+}
+
+// 🔁 refresh logs every 2 sec
+setInterval(fetchLogs, 2000);
 </script>
 
 </body>
